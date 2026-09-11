@@ -147,11 +147,19 @@ class ForensicsToolRegistry:
         if incident and incident.started_at:
             baseline_samples = [s for s in samples if s.timestamp < incident.started_at]
             recent_samples = [s for s in samples if s.timestamp >= incident.started_at]
-            if not baseline_samples:
-                # Fallback to pre-incident window: earliest 30% of samples
-                split = max(2, int(len(samples) * 0.3))
-                baseline_samples = samples[:split]
-                recent_samples = samples[split:]
+            if len(baseline_samples) < 3:
+                if incident.is_simulated:
+                    split = max(2, int(len(samples) * 0.3))
+                    baseline_samples = samples[:split]
+                    recent_samples = samples[split:]
+                else:
+                    return {
+                        "status": "INSUFFICIENT_HISTORICAL_BASELINE",
+                        "error": "Insufficient pre-incident baseline telemetry. Refusing to contaminate reference population with incident failure data.",
+                        "metric": metric_name,
+                        "service": service,
+                        "pre_incident_samples": len(baseline_samples),
+                    }
         else:
             # Operational baseline: earliest 35% of samples
             split = max(2, int(len(samples) * 0.35))

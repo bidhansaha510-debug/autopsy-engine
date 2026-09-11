@@ -1,13 +1,13 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 from sqlalchemy.orm import Session
-from backend.models import Hypothesis, Incident, Evidence, Event, ConfigChange, Deployment, Anomaly
+from backend.models import Hypothesis, Incident, Evidence, Event, ConfigChange, Deployment, Anomaly, ServiceDependency, Service
 from backend.models.base import generate_uuid
 from backend.correlation.engine import CorrelationEngine
 from backend.hypotheses.prove_me_wrong import ProveMeWrongEvaluator
 
 
 class HypothesisEngine:
-    """Dynamic hypothesis generation engine that builds causal candidates from observed telemetry."""
+    """Pure evidence-driven hypothesis generation engine that builds causal candidates strictly from observed telemetry."""
 
     def __init__(self, db: Session):
         self.db = db
@@ -23,19 +23,21 @@ class HypothesisEngine:
         # Remove existing hypotheses to re-synthesize cleanly
         self.db.query(Hypothesis).filter(Hypothesis.incident_id == incident_id).delete()
 
-        # 1. Discover causal chains from the Causal Graph
+        # 1. Discover causal chains from the Causal DAG
         causal_chains = self.correlator.extract_causal_chains(incident_id)
 
         # 2. Collect context telemetry
-        config_changes = self.db.query(ConfigChange).all()
-        deployments = self.db.query(Deployment).all()
         anomalies = self.db.query(Anomaly).filter(Anomaly.incident_id == incident_id).all()
         all_services = list({a.service for a in anomalies if a.service}) or ["service"]
 
-        candidates: List[Hypothesis] = []
+        # Check if actual deployment or config changes exist
+        deployments = self.db.query(Deployment).all()
+        config_changes = self.db.query(ConfigChange).all()
 
-        # 3. Dynamic Generation from Observed Causal Chains
-        seen_mechanisms = set()
+        candidates: List[Hypothesis] = []
+        seen_mechanisms: Set[str] = set()
+
+        # 3. Dynamic Generation from Observed Causal Chains in the DAG
         for chain in causal_chains:
             root_svc = chain.get("root_service") or all_services[0]
             trigger_type = chain.get("trigger_type")
@@ -128,78 +130,47 @@ class HypothesisEngine:
             )
             candidates.append(hyp)
 
-        # 4. Synthesize Rival / Competing Candidate Hypotheses to guarantee rigorous counterevidence testing
-
-        # Rival Candidate 1: External / Upstream Third-Party Network Degradation
-        target_affected = all_services[:3]
-        rival_net = Hypothesis(
-            id=generate_uuid(),
-            incident_id=incident_id,
-            statement="External network partition or upstream third-party transit latency",
-            claim="External network partition or upstream third-party transit latency",
-            causal_mechanism="External Network / Cloud Transit -> Gateway Latency -> Ingress Timeouts",
-            score=0.10,
-            status="CANDIDATE",
-            affected_services=target_affected,
-            expected_observations=[
-                "Elevated network packet loss, interface drops, or TCP handshake timeouts",
-                "Upstream third-party endpoint timeouts without internal trigger correlation",
-                "Absence of internal config changes or software deployments",
-            ],
-            predicted_observations=[
-                {"type": "NETWORK", "service": "network", "description": "Network packet loss, interface drops, or TCP timeout metrics", "mandatory": False, "weight": 1.0},
-                {"type": "LOG", "service": "network", "description": "DNS or external gateway connection reset errors", "mandatory": False, "weight": 0.8},
-            ],
-            required_evidence=[
-                {"evidence_type": "NETWORK", "entity": "network", "mandatory": False, "description": "Network packet loss or interface drop telemetry"},
-            ],
-            supporting_rules=[
-                {"rule_type": "EXTERNAL_INDEPENDENCE", "description": "Symptoms span independent nodes without shared internal bottlenecks"},
-            ],
-            contradiction_rules=[
-                {"rule_type": "CONCURRENT_INTERNAL_CHANGE", "description": "Internal configuration or deployment change preceded outage onset"},
-                {"rule_type": "RECOVERY_COINCIDES_WITH_ROLLBACK", "description": "System recovered immediately upon reverting internal configuration"},
-            ],
-            actual_observations=[],
-            missing_evidence=[],
-            rank=len(candidates) + 1,
-        )
-        candidates.append(rival_net)
-
-        # Rival Candidate 2: Application Code Regression / Deployment Defect
-        dep_service = all_services[0] if all_services else "service"
-        rival_dep = Hypothesis(
-            id=generate_uuid(),
-            incident_id=incident_id,
-            statement=f"Application software defect or memory leak introduced via recent code deployment on {dep_service}",
-            claim=f"Application software defect or memory leak introduced via recent code deployment on {dep_service}",
-            causal_mechanism="Software Release -> Memory Leak / Thread Contention -> Service Degradation",
-            score=0.10,
-            status="CANDIDATE",
-            affected_services=[dep_service],
-            expected_observations=[
-                f"Recent software deployment or Git commit timestamped prior to incident onset on {dep_service}",
-                "Gradual heap memory growth, thread exhaustion, or unhandled exceptions",
-                "Application stack traces showing software regression",
-            ],
-            predicted_observations=[
-                {"type": "DEPLOYMENT", "service": dep_service, "description": f"Software deployment on {dep_service} preceding incident", "mandatory": True, "weight": 1.2},
-                {"type": "LOG", "service": dep_service, "description": "Unhandled application exception or fatal stack trace", "mandatory": False, "weight": 0.9},
-            ],
-            required_evidence=[
-                {"evidence_type": "DEPLOYMENT", "entity": dep_service, "mandatory": True, "description": f"Deployment audit record for {dep_service}"},
-            ],
-            supporting_rules=[
-                {"rule_type": "DEPLOYMENT_PRECEDENCE", "description": "Deployment strictly preceded symptom onset"},
-            ],
-            contradiction_rules=[
-                {"rule_type": "ZERO_DEPLOYMENTS", "description": "Zero software deployments detected within incident window"},
-            ],
-            actual_observations=[],
-            missing_evidence=[],
-            rank=len(candidates) + 1,
-        )
-        candidates.append(rival_dep)
+        # 4. Synthesize Rival Topological Hypotheses from Observed Inbound/Outbound Dependencies
+        # For caller services in the dependency chain, synthesize rival candidates asserting that the degradation
+        # was an isolated internal issue on that caller rather than a cascade from downstream dependencies
+        if len(candidates) >= 1 and len(all_services) > 1:
+            for caller_service in reversed(all_services):
+                mech = f"{caller_service} Internal Resource Saturation -> Direct Caller Timeouts"
+                if mech in seen_mechanisms:
+                    continue
+                seen_mechanisms.add(mech)
+                rival_caller = Hypothesis(
+                    id=generate_uuid(),
+                    incident_id=incident_id,
+                    statement=f"Isolated internal capacity exhaustion on caller service {caller_service} independent of downstream dependencies",
+                    claim=f"Isolated internal capacity exhaustion on caller service {caller_service} independent of downstream dependencies",
+                    causal_mechanism=mech,
+                    score=0.10,
+                    status="CANDIDATE",
+                    affected_services=[caller_service],
+                    expected_observations=[
+                        f"Isolated CPU/memory saturation on {caller_service} without dependency correlation",
+                        f"Normal operational response times from downstream dependencies of {caller_service}",
+                    ],
+                    predicted_observations=[
+                        {"type": "METRIC", "service": caller_service, "description": f"Resource exhaustion on {caller_service}", "mandatory": True, "weight": 1.0},
+                    ],
+                    required_evidence=[
+                        {"evidence_type": "METRIC", "entity": caller_service, "mandatory": True, "description": f"Metric saturation on {caller_service}"},
+                    ],
+                    supporting_rules=[
+                        {"rule_type": "LOCAL_SATURATION", "description": f"Isolated saturation on {caller_service}"},
+                    ],
+                    contradiction_rules=[
+                        {"rule_type": "RECOVERY_COINCIDES_WITH_ROLLBACK", "description": "Caller recovery coincided with upstream dependency mitigation/rollback"},
+                    ],
+                    actual_observations=[],
+                    missing_evidence=[],
+                    rank=len(candidates) + 1,
+                )
+                candidates.append(rival_caller)
+                if len(candidates) >= 5:
+                    break
 
         # Persist candidates to DB
         for c in candidates:

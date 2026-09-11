@@ -13,18 +13,24 @@ from backend.replay.engine import IncidentReplayEngine
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize DB and ensure canonical incident exists for immediate forensic readiness
+    # Startup: Initialize DB schema and auto-migrate columns
     init_db()
-    db = SessionLocal()
-    try:
-        count = db.query(Incident).count()
-        if count == 0:
-            replay = IncidentReplayEngine(db)
-            replay.bootstrap_canonical_incident()
-    except Exception as e:
-        print(f"[AUTOPSY] Startup bootstrap warning: {e}")
-    finally:
-        db.close()
+
+    # In demo mode, bootstrap the benchmark incident if the database is fresh
+    if settings.ENVIRONMENT == "demo" or settings.AUTO_BOOTSTRAP_DEMO:
+        db = SessionLocal()
+        try:
+            count = db.query(Incident).count()
+            if count == 0:
+                print("[AUTOPSY] Demo mode active: bootstrapping canonical benchmark scenario...")
+                replay = IncidentReplayEngine(db)
+                replay.bootstrap_canonical_incident()
+        except Exception as e:
+            print(f"[AUTOPSY] Demo bootstrap warning: {e}")
+        finally:
+            db.close()
+    else:
+        print(f"[AUTOPSY] Operating in {settings.ENVIRONMENT} mode: pristine database ready for live telemetry ingestion.")
     yield
 
 

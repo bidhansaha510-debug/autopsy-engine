@@ -5,8 +5,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Infrastructure Autopsy"
     VERSION: str = "1.0.0"
-    API_V1_STR: str = "/api"
-    ENVIRONMENT: str = "development"
+    ENVIRONMENT: str = "production"  # "production", "demo", "test"
+    AUTO_BOOTSTRAP_DEMO: bool = False
     LOG_LEVEL: str = "INFO"
 
     # Database: Supports SQLite for zero-dependency local forensic runs,

@@ -56,11 +56,15 @@ class AnomalyDetector:
             if not incident_samples:
                 continue
 
-            if len(baseline_vals) < 3 and len(incident_samples) >= 5:
-                # Use first samples as reference baseline
-                split_idx = max(2, len(incident_samples) // 3)
-                baseline_vals = [s.value for s in incident_samples[:split_idx]]
-                eval_samples = incident_samples[split_idx:]
+            if len(baseline_vals) < 3:
+                if incident.is_simulated and len(incident_samples) >= 5:
+                    # Permitted for simulated demonstration scenarios only
+                    split_idx = max(2, len(incident_samples) // 3)
+                    baseline_vals = [s.value for s in incident_samples[:split_idx]]
+                    eval_samples = incident_samples[split_idx:]
+                else:
+                    # In production: refuse to contaminate reference population with failure-period data
+                    continue
             else:
                 eval_samples = incident_samples
 

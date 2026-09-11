@@ -72,14 +72,31 @@ class TraceAnalyzer:
         if total_trace_duration <= 0:
             total_trace_duration = 1.0
 
-        # Build tree recursively and compute self-times
+        # Build tree recursively and compute self-times via interval union
         def build_node(s: Span) -> SpanNode:
             child_spans = children_map.get(s.span_id, [])
             child_nodes = [build_node(c) for c in child_spans]
 
-            # Self time = span duration - sum of direct child durations
-            child_durations_sum = sum(c.duration_ms for c in child_spans)
-            self_time = max(0.0, s.duration_ms - child_durations_sum)
+            # Compute interval union of child executions to account for concurrency/overlap
+            intervals = []
+            for c in child_spans:
+                try:
+                    c_offset = max(0.0, (c.start_time - s.start_time).total_seconds() * 1000.0)
+                except Exception:
+                    c_offset = 0.0
+                c_end = c_offset + c.duration_ms
+                intervals.append([c_offset, c_end])
+
+            # Merge overlapping intervals
+            merged = []
+            for start, end in sorted(intervals, key=lambda x: x[0]):
+                if not merged or merged[-1][1] < start:
+                    merged.append([start, end])
+                else:
+                    merged[-1][1] = max(merged[-1][1], end)
+
+            child_active_time = sum(end - start for start, end in merged)
+            self_time = max(0.0, s.duration_ms - child_active_time)
             latency_pct = round((s.duration_ms / total_trace_duration) * 100.0, 2)
 
             return SpanNode(
@@ -99,7 +116,7 @@ class TraceAnalyzer:
 
         root_node = build_node(root_span) if root_span else None
 
-        # Compute Critical Path (longest duration path from root to leaf)
+        # Compute Critical Path via interval bottleneck progression
         critical_path_ids: List[str] = []
 
         def find_critical_path(curr: Optional[SpanNode]):
@@ -109,9 +126,21 @@ class TraceAnalyzer:
             curr.is_critical_path = True
             if not curr.children:
                 return
-            # Pick child with highest duration
-            heaviest_child = max(curr.children, key=lambda c: c.duration_ms)
-            find_critical_path(heaviest_child)
+            # True distributed critical path: child that determined the latest completion boundary
+            def child_bottleneck_score(child: SpanNode) -> float:
+                span_obj = span_map.get(child.span_id)
+                curr_obj = span_map.get(curr.span_id)
+                if span_obj and curr_obj:
+                    try:
+                        start_delta = max(0.0, (span_obj.start_time - curr_obj.start_time).total_seconds() * 1000.0)
+                        end_delta = start_delta + child.duration_ms
+                        return end_delta
+                    except Exception:
+                        pass
+                return child.duration_ms
+
+            bottleneck_child = max(curr.children, key=child_bottleneck_score)
+            find_critical_path(bottleneck_child)
 
         find_critical_path(root_node)
 
