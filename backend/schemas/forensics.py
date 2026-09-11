@@ -45,12 +45,18 @@ class HypothesisResponse(BaseModel):
     id: str
     incident_id: str
     statement: str
+    claim: Optional[str] = None
+    causal_mechanism: Optional[str] = None
     score: float
     status: str
     affected_services: List[str]
-    expected_observations: List[str]
-    actual_observations: List[str]
-    missing_evidence: List[str]
+    expected_observations: List[str] = Field(default_factory=list)
+    predicted_observations: List[Dict[str, Any]] = Field(default_factory=list)
+    required_evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    supporting_rules: List[Dict[str, Any]] = Field(default_factory=list)
+    contradiction_rules: List[Dict[str, Any]] = Field(default_factory=list)
+    actual_observations: List[str] = Field(default_factory=list)
+    missing_evidence: List[str] = Field(default_factory=list)
     rank: int
     supporting_evidence_count: int = 0
     contradicting_evidence_count: int = 0

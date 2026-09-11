@@ -66,9 +66,14 @@ export class HypothesesComponent {
           <div class="hypothesis-card ${isLeading ? 'leading' : ''}">
             <div style="display:flex; justify-content:space-between; align-items:flex-start;">
               <span class="badge" style="background:rgba(255,255,255,0.06);">RANK #${h.rank}</span>
-              <span class="badge ${h.status === 'SUPPORTED' ? 'badge-resolved' : h.status === 'REFUTED' ? 'badge-sev1' : 'badge-provenance'}">${h.status}</span>
+              <span class="badge ${h.status === 'STRONGLY_SUPPORTED' || h.status === 'SUPPORTED' ? 'badge-resolved' : h.status === 'REFUTED' ? 'badge-sev1' : 'badge-provenance'}">${h.status}</span>
             </div>
             <div style="font-size:14px; font-weight:700; color:#fff;">${h.statement}</div>
+            ${h.causal_mechanism ? `
+              <div style="margin-top:6px; font-size:11px; color:var(--accent-cyan); font-family:var(--font-mono); background:rgba(6,182,212,0.08); padding:4px 8px; border-radius:4px; border:1px solid rgba(6,182,212,0.2); word-break:break-all;">
+                ⚡ ${h.causal_mechanism}
+              </div>
+            ` : ''}
 
             <div class="score-bar-wrapper">
               <div style="display:flex; justify-content:space-between; font-size:11px;">

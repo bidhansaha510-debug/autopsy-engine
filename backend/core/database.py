@@ -62,3 +62,21 @@ def init_db():
         Report,
     )
     Base.metadata.create_all(bind=engine)
+
+    # Auto-migrate missing columns for existing SQLite tables
+    try:
+        from sqlalchemy import text, inspect
+        inspector = inspect(engine)
+        with engine.connect() as conn:
+            for table_name in inspector.get_table_names():
+                table = Base.metadata.tables.get(table_name)
+                if table is None:
+                    continue
+                existing_columns = {col["name"] for col in inspector.get_columns(table_name)}
+                for column in table.columns:
+                    if column.name not in existing_columns:
+                        col_type = column.type.compile(engine.dialect)
+                        conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column.name} {col_type}"))
+            conn.commit()
+    except Exception:
+        pass

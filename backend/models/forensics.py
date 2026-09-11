@@ -48,10 +48,16 @@ class Hypothesis(Base, TimestampMixin):
     id = Column(String(36), primary_key=True, default=generate_uuid)
     incident_id = Column(String(36), ForeignKey("incidents.id", ondelete="CASCADE"), nullable=False, index=True)
     statement = Column(Text, nullable=False)
+    claim = Column(Text, nullable=True)
+    causal_mechanism = Column(Text, nullable=True)
     score = Column(Float, default=0.0, nullable=False)  # Support score 0.00 - 1.00
-    status = Column(String(32), default="CANDIDATE", nullable=False)  # CANDIDATE, VALIDATING, SUPPORTED, REFUTED
+    status = Column(String(32), default="CANDIDATE", nullable=False)  # CANDIDATE, VALIDATING, SUPPORTED, STRONGLY_SUPPORTED, REFUTED
     affected_services = Column(JSON, default=list, nullable=False)
     expected_observations = Column(JSON, default=list, nullable=False)
+    predicted_observations = Column(JSON, default=list, nullable=False)
+    required_evidence = Column(JSON, default=list, nullable=False)
+    supporting_rules = Column(JSON, default=list, nullable=False)
+    contradiction_rules = Column(JSON, default=list, nullable=False)
     actual_observations = Column(JSON, default=list, nullable=False)
     missing_evidence = Column(JSON, default=list, nullable=False)
     rank = Column(Integer, default=1, nullable=False)

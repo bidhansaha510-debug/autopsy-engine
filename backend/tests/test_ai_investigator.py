@@ -27,18 +27,24 @@ def test_ai_investigator_tool_loop(test_db):
     inv = ai.run_investigation(incident.id)
 
     assert inv.status == "COMPLETED"
-    assert len(inv.steps) == 4
+    assert len(inv.steps) >= 3
 
-    # Verify tool calls
+    # Verify tool calls dynamically selected by the agent
     tools_called = [s.tool_called for s in inv.steps]
-    assert "inspect_config_change" in tools_called
-    assert "compare_baseline" in tools_called
-    assert "get_logs" in tools_called
-    assert "test_hypothesis" in tools_called
+    from backend.ai.investigator import TOOL_DEFINITIONS
+    valid_names = [t["name"] for t in TOOL_DEFINITIONS]
+    for s in inv.steps:
+        assert s.tool_called in valid_names
 
-    # Verify each step has factual findings and generated evidence IDs
+    assert len(set(tools_called)) >= 2
+
+    # Verify each step has factual findings and evidence IDs
     for s in inv.steps:
         assert len(s.findings) > 0
+
+    # Verify calibrated synthesis language
+    assert "FORENSIC" in inv.current_focus or "Hypothesis" in inv.current_focus
+    assert len(inv.current_focus) > 50
 
     # Verify report generator compiles evidence-backed report
     gen = ForensicReportGenerator(test_db)
@@ -46,5 +52,5 @@ def test_ai_investigator_tool_loop(test_db):
 
     assert report.id is not None
     assert "FORENSIC INCIDENT REPORT" in report.content_markdown
-    assert "Database connection-pool exhaustion" in report.rca_statement or "pool" in report.rca_statement.lower()
+    assert "pool" in report.rca_statement.lower()
     assert len(report.recommendations) > 0

@@ -1,10 +1,71 @@
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from sqlalchemy.orm import Session
-from backend.models import Hypothesis, Evidence, HypothesisEvidence, MetricSample, Metric, ConfigChange, Deployment
+from backend.models import Hypothesis, Evidence, HypothesisEvidence, MetricSample, Metric, ConfigChange, Deployment, Event
 from backend.models.base import generate_uuid
 
 
+def _matches_evidence(pred: Dict[str, Any], ev: Evidence) -> bool:
+    pred_type = pred.get("type", "").upper()
+    pred_service = pred.get("service") or pred.get("entity")
+    ev_type = ev.evidence_type.upper()
+    ev_entity = ev.entity or ""
+    content = ev.content if isinstance(ev.content, dict) else {}
+    content_str = str(ev.content).lower()
+
+    # Flexible typed matching
+    type_matched = False
+    if pred_type == ev_type:
+        type_matched = True
+    elif pred_type in ("PROPAGATION", "TRACE") and ev_type in ("TRACE", "LOG", "ALERT"):
+        type_matched = True
+    elif pred_type == "RECOVERY":
+        if ev_type == "RECOVERY" or "rollback" in content_str or "mitigat" in content_str:
+            type_matched = True
+    elif pred_type == "CONFIG" and ev_type == "CONFIG":
+        type_matched = True
+    elif pred_type == "METRIC" and ev_type == "METRIC":
+        type_matched = True
+
+    if not type_matched:
+        return False
+
+    # Service / entity matching
+    if not pred_service:
+        return True
+    if pred_service == ev_entity or ev_entity.startswith(f"{pred_service}.") or ev_entity.startswith(f"{pred_service}:"):
+        return True
+    if content.get("service") == pred_service:
+        return True
+    return pred_service in ev_entity or pred_service in content_str
+
+
+def _matches_required(req: Dict[str, Any], ev: Evidence) -> bool:
+    req_type = req.get("evidence_type", "").upper()
+    req_entity = req.get("entity")
+    ev_type = ev.evidence_type.upper()
+    ev_entity = ev.entity or ""
+    content = ev.content if isinstance(ev.content, dict) else {}
+
+    if req_type != ev_type:
+        return False
+    if not req_entity:
+        return True
+    if req_entity == ev_entity or ev_entity.startswith(f"{req_entity}.") or ev_entity.startswith(f"{req_entity}:"):
+        return True
+    if content.get("service") == req_entity:
+        return True
+    return req_entity in ev_entity
+
+
 class ProveMeWrongEvaluator:
+    """Generic hypothesis evaluation engine that tests claims against observed telemetry.
+    
+    Operates without hardcoded keyword branches by evaluating formal hypothesis structures:
+    - predicted_observations: verified against actual evidence items
+    - required_evidence: checks for mandatory missing evidence
+    - contradiction_rules: evaluates falsification conditions against evidence
+    """
+
     def __init__(self, db: Session):
         self.db = db
 
@@ -12,7 +73,7 @@ class ProveMeWrongEvaluator:
         self,
         hypothesis: Hypothesis,
     ) -> Dict[str, Any]:
-        """Evaluates hypothesis against all real evidence, searching specifically for counterevidence."""
+        """Evaluates hypothesis generically against all real evidence, searching for counterevidence."""
         incident_id = hypothesis.incident_id
         all_evidence = (
             self.db.query(Evidence)
@@ -20,80 +81,122 @@ class ProveMeWrongEvaluator:
             .all()
         )
 
-        statement_lower = hypothesis.statement.lower()
-
         # Clear existing links to recalculate deterministically
         self.db.query(HypothesisEvidence).filter(
             HypothesisEvidence.hypothesis_id == hypothesis.id
         ).delete()
 
         supporting_evidence: List[Tuple[Evidence, float, str]] = []
-        contradicting_evidence: List[Tuple[Evidence, float, str]] = []
+        contradicting_evidence: List[Tuple[Optional[Evidence], float, str]] = []
         actual_observations: List[str] = []
         missing_evidence: List[str] = []
 
-        # Archetype 1: Database Connection Pool Exhaustion / Config Reduction
-        if "pool" in statement_lower or "database" in statement_lower or "db" in statement_lower:
-            # Positive checks
-            cfg_evid = [e for e in all_evidence if e.evidence_type == "CONFIG" and ("pool" in str(e.content).lower() or "db" in str(e.content).lower())]
-            for ce in cfg_evid:
-                supporting_evidence.append((ce, 1.2, f"Configuration change reduced pool size or DB parameters: {ce.content.get('config_key')}"))
-                actual_observations.append(f"Recorded config reduction {ce.content.get('old_value')} -> {ce.content.get('new_value')}")
+        predicted_obs = hypothesis.predicted_observations or []
+        required_evid = hypothesis.required_evidence or []
+        contradiction_rules = hypothesis.contradiction_rules or []
 
-            db_metrics = [e for e in all_evidence if e.evidence_type == "METRIC" and ("pool" in e.entity.lower() or "connection" in e.entity.lower())]
-            for me in db_metrics:
-                actual_val = me.content.get("actual") or me.content.get("latest_value", 0)
-                expected_val = me.content.get("expected", 0)
-                if actual_val > expected_val or actual_val > 80:
-                    supporting_evidence.append((me, 1.0, f"Observed elevated DB connection metric on {me.entity}: {actual_val}"))
-                    actual_observations.append(f"DB connection utilization reached {actual_val}")
-                elif actual_val < 20:
-                    # COUNTEREVIDENCE: Connection pool utilization stayed low
-                    contradicting_evidence.append((me, 1.5, f"Counterevidence: DB connection metric remained low ({actual_val}) on {me.entity}"))
+        # 1. Evaluate Predicted Observations against Evidence
+        for pred in predicted_obs:
+            desc = pred.get("description", "")
+            matched_ev: Optional[Evidence] = None
 
-            timeout_logs = [e for e in all_evidence if e.evidence_type == "LOG" and ("timeout" in str(e.content).lower() or "pool" in str(e.content).lower() or "connection" in str(e.content).lower())]
-            for le in timeout_logs:
-                supporting_evidence.append((le, 0.8, f"Service log confirms timeouts waiting for resources: {le.content.get('message')}"))
-                actual_observations.append(f"Timeouts recorded on {le.entity}")
+            for ev in all_evidence:
+                if _matches_evidence(pred, ev):
+                    matched_ev = ev
+                    break
 
-            recovery_evid = [e for e in all_evidence if e.evidence_type in ("CONFIG", "RECOVERY", "DEPLOYMENT") and "rollback" in str(e.content).lower()]
-            for re in recovery_evid:
-                supporting_evidence.append((re, 1.0, f"Recovery immediately followed rollback of config change: {re.id}"))
-                actual_observations.append("Rollback directly restored healthy metric baseline")
+            if matched_ev:
+                weight = pred.get("weight", 1.0)
+                expl = f"Observed [{matched_ev.id}] on {matched_ev.entity}: {desc or matched_ev.content}"
+                supporting_evidence.append((matched_ev, weight, expl))
+                actual_observations.append(f"Confirmed: {desc} ({matched_ev.id})")
+            elif pred.get("mandatory", False):
+                missing_evidence.append(f"Missing expected observation: {desc}")
 
-            if not cfg_evid:
-                missing_evidence.append("No recorded database configuration change in audit log")
-            if not db_metrics:
-                missing_evidence.append("No active database connection pool timeseries telemetry available")
+        # 2. Check Required Evidence criteria
+        for req in required_evid:
+            req_desc = req.get("description", "")
+            is_mandatory = req.get("mandatory", True)
 
-        # Archetype 2: External / Upstream Network Degradation
-        elif "network" in statement_lower or "upstream" in statement_lower or "gateway" in statement_lower:
-            net_logs = [e for e in all_evidence if e.evidence_type == "LOG" and ("packet loss" in str(e.content).lower() or "network" in str(e.content).lower() or "unreachable" in str(e.content).lower())]
-            for ne in net_logs:
-                supporting_evidence.append((ne, 1.0, f"Network error log observed: {ne.content.get('message')}"))
-                actual_observations.append(f"Network error on {ne.entity}")
+            found = any(_matches_required(req, ev) for ev in all_evidence)
+            if not found and is_mandatory:
+                missing_evidence.append(f"Required telemetry absent: {req_desc}")
 
-            # Check if internal config change exists (COUNTEREVIDENCE against pure external network failure)
-            cfg_evid = [e for e in all_evidence if e.evidence_type == "CONFIG"]
-            if cfg_evid:
-                contradicting_evidence.append((cfg_evid[0], 1.2, "Counterevidence: Internal configuration change directly preceded symptoms, weakening pure network failure hypothesis"))
+        # 3. Evaluate Generic Contradiction Rules
+        for rule in contradiction_rules:
+            rule_type = rule.get("rule_type", "")
+            target_service = rule.get("service")
 
-            if not net_logs:
-                missing_evidence.append("No network packet loss, interface drops, or ICMP latency telemetry recorded")
+            if rule_type == "METRIC_REMAINED_NORMAL":
+                metric_evids = [
+                    e for e in all_evidence
+                    if e.evidence_type == "METRIC" and (not target_service or target_service in e.entity)
+                ]
+                observed_values = []
+                for me in metric_evids:
+                    content = me.content if isinstance(me.content, dict) else {}
+                    val = content.get("actual") or content.get("value") or content.get("latest_value")
+                    if val is not None:
+                        try:
+                            observed_values.append((float(val), me))
+                        except (ValueError, TypeError):
+                            pass
 
-        # Archetype 3: Application Code Regression / Deployment Bug
-        elif "code" in statement_lower or "regression" in statement_lower or "deployment" in statement_lower or "release" in statement_lower:
-            dep_evid = [e for e in all_evidence if e.evidence_type == "DEPLOYMENT"]
-            for de in dep_evid:
-                supporting_evidence.append((de, 1.0, f"Deployment {de.content.get('version')} occurred prior to failure"))
-                actual_observations.append(f"Deployment of version {de.content.get('version')} to {de.entity}")
+                if observed_values:
+                    max_observed, max_ev = max(observed_values, key=lambda x: x[0])
+                    if max_observed < 30.0:
+                        contradicting_evidence.append((
+                            max_ev,
+                            1.5,
+                            f"Counterevidence: Metric on {target_service or 'service'} remained normal (peak value: {max_observed})"
+                        ))
 
-            if not dep_evid:
-                missing_evidence.append("No software deployments occurred prior to incident onset")
-                # Counterevidence: claim of deployment bug when no deployment occurred
-                contradicting_evidence.append((all_evidence[0] if all_evidence else None, 0.9, "Counterevidence: Zero code deployments detected within incident window"))
+            elif rule_type == "CONCURRENT_INTERNAL_CHANGE":
+                internal_changes = [
+                    e for e in all_evidence
+                    if e.evidence_type in ("CONFIG", "DEPLOYMENT")
+                ]
+                if internal_changes:
+                    first_chg = internal_changes[0]
+                    contradicting_evidence.append((
+                        first_chg,
+                        1.4,
+                        f"Counterevidence: Internal change [{first_chg.id}] on {first_chg.entity} directly preceded failure, weakening non-internal claim"
+                    ))
 
-        # General evidence linkage
+            elif rule_type == "ZERO_DEPLOYMENTS":
+                dep_evid = [e for e in all_evidence if e.evidence_type == "DEPLOYMENT"]
+                if not dep_evid:
+                    ref_ev = all_evidence[0] if all_evidence else None
+                    contradicting_evidence.append((
+                        ref_ev,
+                        1.5,
+                        "Counterevidence: Zero software deployments occurred within incident window"
+                    ))
+
+            elif rule_type == "RECOVERY_COINCIDES_WITH_ROLLBACK":
+                rollback_evid = [
+                    e for e in all_evidence
+                    if "rollback" in str(e.content).lower() or e.evidence_type == "RECOVERY"
+                ]
+                if rollback_evid:
+                    contradicting_evidence.append((
+                        rollback_evid[0],
+                        1.5,
+                        f"Counterevidence: Recovery [{rollback_evid[0].id}] immediately followed rollback, refuting independent external cause"
+                    ))
+
+            elif rule_type == "ABSENT_CHANGE_RECORD":
+                cfg_evids = [e for e in all_evidence if e.evidence_type == "CONFIG"]
+                if not cfg_evids:
+                    ref_ev = all_evidence[0] if all_evidence else None
+                    contradicting_evidence.append((
+                        ref_ev,
+                        1.5,
+                        "Counterevidence: No configuration changes recorded in target window"
+                    ))
+
+        # 4. Link evidence relationships in DB
         for ev, weight, expl in supporting_evidence:
             if ev:
                 link = HypothesisEvidence(
@@ -101,7 +204,7 @@ class ProveMeWrongEvaluator:
                     hypothesis_id=hypothesis.id,
                     evidence_id=ev.id,
                     relationship_type="SUPPORTS",
-                    weight=weight,
+                    weight=round(weight, 2),
                     explanation=expl,
                 )
                 self.db.add(link)
@@ -113,29 +216,35 @@ class ProveMeWrongEvaluator:
                     hypothesis_id=hypothesis.id,
                     evidence_id=ev.id,
                     relationship_type="CONTRADICTS",
-                    weight=weight,
+                    weight=round(weight, 2),
                     explanation=expl,
                 )
                 self.db.add(link)
 
-        # Calculate calibrated investigation support score
+        # 5. Compute Calibrated Support Score
         total_support_points = sum(w * ev.confidence for ev, w, _ in supporting_evidence if ev)
         total_contra_points = sum(w * (ev.confidence if ev else 1.0) for ev, w, _ in contradicting_evidence if ev)
 
-        base_expected = max(1.0, float(len(hypothesis.expected_observations)))
-        raw_score = (total_support_points - (1.5 * total_contra_points)) / (base_expected * 1.2)
+        expected_weight = sum(p.get("weight", 1.0) for p in predicted_obs) if predicted_obs else max(1.0, float(len(hypothesis.expected_observations or [])))
+        missing_penalty = 0.12 * len(missing_evidence)
+        raw_score = ((total_support_points - (1.5 * total_contra_points)) / max(1.0, expected_weight)) - missing_penalty
         score = max(0.05, min(0.98, raw_score))
 
         hypothesis.score = round(score, 2)
         hypothesis.actual_observations = actual_observations
         hypothesis.missing_evidence = missing_evidence
 
-        if hypothesis.score >= 0.70:
-            hypothesis.status = "SUPPORTED"
-        elif hypothesis.score <= 0.25:
+        # Calibrated status classification
+        if total_contra_points > total_support_points or (len(contradicting_evidence) > 0 and score < 0.35):
             hypothesis.status = "REFUTED"
-        else:
+        elif hypothesis.score >= 0.70 and len(missing_evidence) == 0 and len(contradicting_evidence) == 0:
+            hypothesis.status = "STRONGLY_SUPPORTED"
+        elif hypothesis.score >= 0.65 and len(contradicting_evidence) == 0:
+            hypothesis.status = "SUPPORTED"
+        elif hypothesis.score >= 0.30:
             hypothesis.status = "VALIDATING"
+        else:
+            hypothesis.status = "REFUTED"
 
         self.db.flush()
         return {

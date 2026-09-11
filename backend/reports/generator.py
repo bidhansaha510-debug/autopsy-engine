@@ -27,10 +27,23 @@ class ForensicReportGenerator:
         blast = calc.calculate_blast_radius(incident_id)
 
         top_hyp = hypotheses[0] if hypotheses else None
-        rca_statement = (
-            top_hyp.statement if (top_hyp and top_hyp.score >= 0.70)
-            else "Insufficient evidence to determine root cause with high confidence."
-        )
+        if top_hyp:
+            sup_count_top = sum(1 for el in top_hyp.evidence_links if el.relationship_type == "SUPPORTS")
+            contra_count_top = sum(1 for el in top_hyp.evidence_links if el.relationship_type == "CONTRADICTS")
+            missing_count_top = len(top_hyp.missing_evidence or [])
+            if top_hyp.score >= 0.70 and missing_count_top == 0 and contra_count_top == 0:
+                conclusion_assessment = "Strongly supported by telemetry, not conclusively established."
+            elif top_hyp.score >= 0.60:
+                conclusion_assessment = "Supported by available telemetry; alternative hypotheses partially refuted."
+            elif top_hyp.score >= 0.30:
+                conclusion_assessment = "Plausible candidate under active validation; insufficient telemetry for formal confirmation."
+            else:
+                conclusion_assessment = "Insufficient evidence to determine root cause."
+        else:
+            conclusion_assessment = "No candidate hypotheses generated."
+            sup_count_top, contra_count_top, missing_count_top = 0, 0, 0
+
+        rca_statement = top_hyp.statement if top_hyp else "Insufficient evidence to determine root cause."
 
         # Build Markdown Document
         md_lines = [
@@ -43,11 +56,14 @@ class ForensicReportGenerator:
             incident.summary or "No executive summary provided.",
             "",
             "## 2. Root Cause Analysis (RCA Candidates)",
-            f"**Leading Conclusion**: {rca_statement}",
-            f"**Confidence/Support Score**: {top_hyp.score if top_hyp else 0.0} (Calibrated Investigation Support Score)",
+            f"**Most-Supported Hypothesis**: {top_hyp.statement if top_hyp else 'None'}",
+            f"**Causal Mechanism**: `{top_hyp.causal_mechanism if (top_hyp and top_hyp.causal_mechanism) else 'N/A'}`",
+            f"**Support Score**: **{top_hyp.score if top_hyp else 0.0:.2f}** (Calibrated Investigation Support Score)",
+            f"**Investigation Assessment**: {conclusion_assessment}",
+            f"**Telemetry Counts**: {sup_count_top} Supporting | {contra_count_top} Contradicting | {missing_count_top} Missing",
             "",
-            "### Competing Hypotheses Matrix",
-            "| Rank | Hypothesis Statement | Status | Support Score | Supported By | Counterevidence |",
+            "### Competing Hypotheses & Counterevidence Matrix",
+            "| Rank | Hypothesis Claim | Status | Support Score | Supported By | Counterevidence |",
             "|---|---|---|---|---|---|",
         ]
 

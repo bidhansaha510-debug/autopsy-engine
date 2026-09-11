@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from backend.models import (
+    Incident,
     LogEntry,
     Metric,
     MetricSample,
@@ -87,12 +88,12 @@ class ForensicsToolRegistry:
         result = TraceAnalyzer.analyze_trace(trace, spans)
         return result.model_dump()
 
-    def inspect_deployment(self, service: Optional[str] = None) -> Dict[str, Any]:
+    def inspect_deployment(self, service: Optional[str] = None, lookback_entries: int = 10) -> Dict[str, Any]:
         """Inspects recent deployments and commit SHAs."""
         q = self.db.query(Deployment)
         if service:
             q = q.filter(Deployment.service == service)
-        deps = q.order_by(Deployment.deployed_at.desc()).limit(10).all()
+        deps = q.order_by(Deployment.deployed_at.desc()).limit(lookback_entries).all()
         return {
             "deployments": [
                 {
@@ -107,12 +108,12 @@ class ForensicsToolRegistry:
             ]
         }
 
-    def inspect_config_change(self, service: Optional[str] = None) -> Dict[str, Any]:
+    def inspect_config_change(self, service: Optional[str] = None, lookback_entries: int = 10) -> Dict[str, Any]:
         """Inspects configuration changes, old values, new values, and operators."""
         q = self.db.query(ConfigChange)
         if service:
             q = q.filter(ConfigChange.service == service)
-        cfgs = q.order_by(ConfigChange.changed_at.desc()).limit(10).all()
+        cfgs = q.order_by(ConfigChange.changed_at.desc()).limit(lookback_entries).all()
         return {
             "config_changes": [
                 {
@@ -129,8 +130,8 @@ class ForensicsToolRegistry:
             ]
         }
 
-    def compare_baseline(self, metric_name: str, service: str) -> Dict[str, Any]:
-        """Compares current metric against historical baseline values."""
+    def compare_baseline(self, metric_name: str, service: str, incident_id: Optional[str] = None) -> Dict[str, Any]:
+        """Compares incident metric samples against historical baseline samples."""
         metric = self.db.query(Metric).filter(Metric.name == metric_name, Metric.service == service).first()
         if not metric:
             return {"error": f"Metric {metric_name} on {service} not found"}
@@ -139,9 +140,26 @@ class ForensicsToolRegistry:
         if len(samples) < 3:
             return {"error": "Insufficient samples for baseline calculation"}
 
-        split = max(2, len(samples) // 2)
-        baseline_vals = [s.value for s in samples[:split]]
-        recent_vals = [s.value for s in samples[split:]]
+        incident = None
+        if incident_id:
+            incident = self.db.query(Incident).filter(Incident.id == incident_id).first()
+
+        if incident and incident.started_at:
+            baseline_samples = [s for s in samples if s.timestamp < incident.started_at]
+            recent_samples = [s for s in samples if s.timestamp >= incident.started_at]
+            if not baseline_samples:
+                # Fallback to pre-incident window: earliest 30% of samples
+                split = max(2, int(len(samples) * 0.3))
+                baseline_samples = samples[:split]
+                recent_samples = samples[split:]
+        else:
+            # Operational baseline: earliest 35% of samples
+            split = max(2, int(len(samples) * 0.35))
+            baseline_samples = samples[:split]
+            recent_samples = samples[split:]
+
+        baseline_vals = [s.value for s in baseline_samples]
+        recent_vals = [s.value for s in recent_samples]
 
         base_stats = compute_baseline_stats(baseline_vals)
         recent_avg = sum(recent_vals) / len(recent_vals) if recent_vals else base_stats.median
@@ -155,6 +173,29 @@ class ForensicsToolRegistry:
             "deviation": eval_res["deviation"],
             "anomaly_score": eval_res["anomaly_score"],
             "severity": eval_res["severity"],
+            "min_samples_met": eval_res["min_samples_met"],
+        }
+
+    def get_anomalies(self, incident_id: str) -> Dict[str, Any]:
+        """Retrieves all detected statistical anomalies for an incident."""
+        anomalies = self.db.query(Anomaly).filter(Anomaly.incident_id == incident_id).order_by(Anomaly.anomaly_score.desc()).all()
+        return {
+            "incident_id": incident_id,
+            "anomalies_count": len(anomalies),
+            "anomalies": [
+                {
+                    "id": a.id,
+                    "service": a.service,
+                    "metric_name": a.metric_name,
+                    "detected_at": a.detected_at.isoformat(),
+                    "actual": a.actual,
+                    "expected": a.expected,
+                    "deviation": a.deviation,
+                    "severity": a.severity,
+                    "anomaly_score": a.anomaly_score,
+                }
+                for a in anomalies
+            ]
         }
 
     def find_related_events(self, incident_id: str, event_id: str) -> Dict[str, Any]:
