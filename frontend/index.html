@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>INFRASTRUCTURE AUTOPSY — Incident Forensics & Reconstruction</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/svg+xml" href="/favicon.ico">
+  <link rel="stylesheet" href="/static/css/main.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+</head>
+<body>
+  <div class="app-wrapper">
+    <!-- Top Navigation -->
+    <header class="top-nav">
+      <div class="brand-section">
+        <div class="brand-logo">
+          <span class="scanner-icon">◈</span>
+          <span>INFRASTRUCTURE AUTOPSY</span>
+        </div>
+        <div class="tagline">Give it the evidence. It reconstructs the incident.</div>
+      </div>
+
+      <div class="incident-selector-wrapper">
+        <span style="font-size:11px; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Case File:</span>
+        <select id="select-incident" class="select-incident"></select>
+        <button id="btn-open-upload-modal" class="ctrl-btn" style="border-color:var(--accent-cyan); color:var(--accent-cyan);">
+          📁 Ingest Codebase / Folder
+        </button>
+        <button id="btn-bootstrap-incident" class="ctrl-btn" style="border-color:var(--accent-purple); color:#c084fc;">
+          + Benchmark Incident
+        </button>
+      </div>
+
+      <div class="system-status-pills">
+        <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-muted);">
+          <span id="ollama-status-dot" style="width:8px; height:8px; border-radius:50%; background:#10b981;"></span>
+          <span id="ollama-status-text">Ollama Active</span>
+        </div>
+        <span class="badge badge-provenance">READ-ONLY FORENSICS</span>
+      </div>
+    </header>
+
+    <!-- Cockpit Banner -->
+    <div class="cockpit-banner">
+      <div class="cockpit-left">
+        <div class="incident-title-row">
+          <span id="banner-severity" class="badge badge-sev1">SEV1</span>
+          <span id="banner-incident-title" class="incident-title-text">Loading Forensic Reconstruction...</span>
+          <span id="banner-status" class="badge badge-resolved">RESOLVED</span>
+          <span id="banner-mode" class="badge badge-simulated">SIMULATION</span>
+        </div>
+        <div class="cockpit-metadata">
+          <span>🕒 Window: <strong id="banner-time">02:47 → 02:53 UTC</strong></span>
+          <span>⚡ MTTR: <strong>6 mins</strong></span>
+          <span>🔒 Integrity: <strong>Indelible Provenance Tracked</strong></span>
+        </div>
+      </div>
+
+      <div class="cockpit-right">
+        <div class="leading-cause-card">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span class="leading-cause-label">Leading Root-Cause Hypothesis</span>
+            <span id="banner-leading-score" class="badge badge-supports">Support: 94%</span>
+          </div>
+          <div id="banner-leading-hypothesis" class="leading-cause-text">
+            Analyzing telemetry and counterevidence...
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Forensic Navigation Tabs -->
+    <nav class="tabs-nav">
+      <button class="tab-btn active" data-view="overview">
+        <span>📊</span> Cockpit Overview
+      </button>
+      <button class="tab-btn" data-view="timeline">
+        <span>⏱</span> Chronological Timeline
+      </button>
+      <button class="tab-btn" data-view="topology">
+        <span>🕸</span> Topology & Blast Radius
+      </button>
+      <button class="tab-btn" data-view="anomalies">
+        <span>📈</span> Metric Anomalies & Baselines
+      </button>
+      <button class="tab-btn" data-view="traces">
+        <span>⚡</span> Distributed Traces (Waterfall)
+      </button>
+      <button class="tab-btn" data-view="hypotheses">
+        <span>⚖</span> Hypotheses & Counterevidence
+      </button>
+      <button class="tab-btn" data-view="evidence">
+        <span>🗄</span> Evidence Locker
+      </button>
+      <button class="tab-btn" data-view="ai">
+        <span>🧠</span> AI Investigator Terminal
+      </button>
+      <button class="tab-btn" data-view="reports">
+        <span>📄</span> Incident Report
+      </button>
+    </nav>
+
+    <!-- Main Viewport -->
+    <main class="main-viewport">
+      <!-- 1. Overview Panel -->
+      <section id="view-overview" class="view-panel active">
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+          <div class="glass-card">
+            <div class="card-header">
+              <span class="card-title"><span>🕸</span> Incident Topology & Failure Propagation</span>
+            </div>
+            <div id="overview-topology-container" style="height:320px; position:relative; overflow:hidden;"></div>
+          </div>
+          <div class="glass-card">
+            <div class="card-header">
+              <span class="card-title"><span>🎯</span> Forensic Invariant Checklist</span>
+              <span class="badge badge-provenance">DETERMINISTIC VERIFICATION</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:12px; font-size:13px;">
+              <div style="display:flex; gap:10px; align-items:flex-start;">
+                <span style="color:#10b981; font-weight:700;">✓</span>
+                <div>
+                  <strong>Temporal Ordering Verified:</strong>
+                  <div style="color:var(--text-muted); font-size:12px;">Configuration change at 02:47 strictly preceded connection pool saturation at 02:48.</div>
+                </div>
+              </div>
+              <div style="display:flex; gap:10px; align-items:flex-start;">
+                <span style="color:#10b981; font-weight:700;">✓</span>
+                <div>
+                  <strong>Topological Dependency Propagation:</strong>
+                  <div style="color:var(--text-muted); font-size:12px;">payment-service saturated → checkout-service RPC timed out → api-gateway returned 503s.</div>
+                </div>
+              </div>
+              <div style="display:flex; gap:10px; align-items:flex-start;">
+                <span style="color:#10b981; font-weight:700;">✓</span>
+                <div>
+                  <strong>Prove Me Wrong Counterevidence Test:</strong>
+                  <div style="color:var(--text-muted); font-size:12px;">Rival network degradation hypothesis refuted: external packet loss metrics stayed normal.</div>
+                </div>
+              </div>
+              <div style="display:flex; gap:10px; align-items:flex-start;">
+                <span style="color:#10b981; font-weight:700;">✓</span>
+                <div>
+                  <strong>Mitigation & Recovery Verified:</strong>
+                  <div style="color:var(--text-muted); font-size:12px;">02:52 Rollback to pool size 50 immediately normalized connection pool utilization to 22%.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. Timeline Panel -->
+      <section id="view-timeline" class="view-panel">
+        <div class="timeline-filters-bar">
+          <div class="timeline-filter-group">
+            <button class="filter-btn active" data-filter="ALL">ALL EVENTS</button>
+            <button class="filter-btn" data-filter="CONFIG">CONFIG CHANGES</button>
+            <button class="filter-btn" data-filter="METRIC">METRIC SAMPLES</button>
+            <button class="filter-btn" data-filter="TRACE">TRACES</button>
+            <button class="filter-btn" data-filter="LOG">LOGS</button>
+            <button class="filter-btn" data-filter="ALERT">ALERTS</button>
+          </div>
+          <span style="font-size:11px; color:var(--text-muted);">Chronological sequence with UTC timestamps & SHA256 fingerprints</span>
+        </div>
+        <div id="timeline-container" class="timeline-list"></div>
+      </section>
+
+      <!-- 3. Topology & Blast Radius Panel -->
+      <section id="view-topology" class="view-panel">
+        <div class="glass-card">
+          <div class="card-header">
+            <span class="card-title"><span>🕸</span> Service Dependency Graph & Propagation Traversal</span>
+            <span class="badge badge-sev1">BLAST PROPAGATION VECTOR</span>
+          </div>
+          <div id="topology-container" class="topology-container"></div>
+        </div>
+      </section>
+
+      <!-- 4. Anomalies & Baselines Panel -->
+      <section id="view-anomalies" class="view-panel">
+        <div id="metrics-container"></div>
+      </section>
+
+      <!-- 5. Distributed Tracing Waterfall Panel -->
+      <section id="view-traces" class="view-panel">
+        <div class="glass-card">
+          <div class="card-header">
+            <span class="card-title"><span>⚡</span> Distributed Trace Critical Path & Latency Breakdown</span>
+            <span class="badge badge-provenance">OPENTELEMETRY TRACE SPANS</span>
+          </div>
+          <div id="waterfall-container"></div>
+        </div>
+      </section>
+
+      <!-- 6. Competing Hypotheses & Counterevidence Panel -->
+      <section id="view-hypotheses" class="view-panel">
+        <div id="hypotheses-container"></div>
+      </section>
+
+      <!-- 7. Evidence Locker Panel -->
+      <section id="view-evidence" class="view-panel">
+        <div class="glass-card">
+          <div class="card-header">
+            <span class="card-title"><span>🗄</span> Indelible Forensic Evidence Register</span>
+            <span class="badge badge-provenance">CHAIN OF CUSTODY</span>
+          </div>
+          <div id="evidence-container"></div>
+        </div>
+      </section>
+
+      <!-- 8. AI Investigator Terminal Panel -->
+      <section id="view-ai" class="view-panel">
+        <div id="ai-console-container"></div>
+      </section>
+
+      <!-- 9. Report View Panel -->
+      <section id="view-reports" class="view-panel">
+        <div id="reports-container"></div>
+      </section>
+    </main>
+
+    <!-- Bottom Replay Scrubber Dock -->
+    <footer class="replay-controller">
+      <div class="replay-controls-group">
+        <button id="btn-replay-prev" class="ctrl-btn">◀ Step</button>
+        <button id="btn-replay-play" class="ctrl-btn" style="border-color:var(--accent-cyan); color:var(--accent-cyan);">▶ Play</button>
+        <button id="btn-replay-next" class="ctrl-btn">Step ▶</button>
+      </div>
+
+      <div class="scrubber-track-container">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span id="lbl-replay-current" style="font-size:11px; font-weight:700; color:#fff;">Replay Cursor: Live</span>
+          <span class="badge badge-provenance">DETERMINISTIC TIME-TRAVEL REPLAY</span>
+        </div>
+        <input id="scrubber-slider" type="range" class="scrubber-slider" min="0" max="100" value="100">
+        <div class="scrubber-labels">
+          <span id="lbl-replay-start">02:45:00</span>
+          <span>Timeline Scrubber</span>
+          <span id="lbl-replay-end">02:53:00</span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Codebase Ingestion Modal -->
+  <div id="modal-codebase-upload" class="modal-backdrop">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div style="font-family:var(--font-display); font-weight:700; font-size:15px; color:#fff; display:flex; align-items:center; gap:8px;">
+          <span>📁</span> Ingest Codebase & System Telemetry Folders
+        </div>
+        <button id="btn-close-modal" class="ctrl-btn" style="padding:2px 8px;">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:flex; gap:8px; border-bottom:1px solid var(--border-color); padding-bottom:8px;">
+          <button id="tab-upload-folder" class="filter-btn active">Upload Folder / Archive</button>
+          <button id="tab-upload-path" class="filter-btn">Scan Local Directory Path</button>
+        </div>
+
+        <!-- Mode 1: File/Folder Picker -->
+        <div id="section-folder-upload">
+          <div style="margin-bottom:10px;">
+            <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px;">Case File Title (Optional):</label>
+            <input id="input-upload-title" type="text" class="input-field" placeholder="e.g. Production Outage: Auth & Payment Cluster">
+          </div>
+          <div class="dropzone-box" id="dropzone-area">
+            <div style="font-size:28px; margin-bottom:8px;">📂</div>
+            <div style="font-weight:600; color:#fff; margin-bottom:4px;">Select a Folder from your Codebase</div>
+            <div style="font-size:11px; color:var(--text-muted); margin-bottom:12px;">
+              Supports multi-service folders, Dockerfiles, docker-compose, configs (.env, .yaml), and log directories (.log, .jsonl)
+            </div>
+            <div style="display:flex; justify-content:center; gap:10px;">
+              <label class="ctrl-btn" style="border-color:var(--accent-cyan); color:var(--accent-cyan); cursor:pointer;">
+                <span>📁</span> Choose Directory
+                <input id="file-input-folder" type="file" webkitdirectory directory multiple style="display:none;">
+              </label>
+              <label class="ctrl-btn" style="cursor:pointer;">
+                <span>📦</span> Choose .ZIP Archive
+                <input id="file-input-archive" type="file" accept=".zip,.tar.gz" style="display:none;">
+              </label>
+            </div>
+            <div id="upload-file-status" style="margin-top:10px; font-size:11px; color:var(--accent-cyan);"></div>
+          </div>
+          <button id="btn-submit-upload" class="ctrl-btn" style="width:100%; margin-top:14px; background:var(--accent-cyan); color:#000; font-weight:700; justify-content:center; border:none; padding:10px;">
+            Extract Services, Parse Telemetry & Ingest
+          </button>
+        </div>
+
+        <!-- Mode 2: Local Path -->
+        <div id="section-path-scan" style="display:none;">
+          <div style="margin-bottom:10px;">
+            <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px;">Absolute Path to Codebase / Telemetry Folder:</label>
+            <input id="input-local-path" type="text" class="input-field" placeholder="e.g. D:/projects/microservices or ./my-app">
+          </div>
+          <div style="margin-bottom:10px;">
+            <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px;">Case File Title (Optional):</label>
+            <input id="input-path-title" type="text" class="input-field" placeholder="e.g. Local Microservices Audit">
+          </div>
+          <button id="btn-submit-path-scan" class="ctrl-btn" style="width:100%; margin-top:10px; background:var(--accent-cyan); color:#000; font-weight:700; justify-content:center; border:none; padding:10px;">
+            Scan Local Directory & Reconstruct Case
+          </button>
+        </div>
+
+        <div id="upload-status-feedback" style="font-size:12px; line-height:1.5; padding:10px; border-radius:4px; display:none;"></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>
