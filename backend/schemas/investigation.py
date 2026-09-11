@@ -81,6 +81,15 @@ class ReportResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ReportUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    content_markdown: Optional[str] = None
+    executive_summary: Optional[str] = None
+    rca_statement: Optional[str] = None
+    recommendations: Optional[List[Dict[str, Any]]] = None
+    preventive_actions: Optional[List[Dict[str, Any]]] = None
+
+
 class ToolExecutionRequest(BaseModel):
     tool_name: str
     incident_id: str

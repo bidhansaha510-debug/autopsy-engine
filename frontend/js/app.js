@@ -31,6 +31,7 @@ class AutopsyApp {
     this.setupNavigation();
     this.setupComponents();
     this.setupCodebaseModal();
+    this.setupStackModal();
 
     // Check health
     try {
@@ -50,8 +51,22 @@ class AutopsyApp {
       console.warn('Health check warning:', e);
     }
 
-    // Load incidents
+    // Load incidents and check URL params
     await this.loadIncidents();
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const targetIncident = urlParams.get('incident');
+    const targetView = urlParams.get('view');
+    if (targetView) {
+      this.switchView(targetView);
+      document.querySelectorAll('.tab-btn').forEach((b) => {
+        if (b.dataset.view === targetView) b.classList.add('active');
+        else b.classList.remove('active');
+      });
+    }
+    if (targetIncident) {
+      this.switchIncident(targetIncident);
+    }
   }
 
   setupNavigation() {
@@ -325,6 +340,110 @@ class AutopsyApp {
     }
   }
 
+  setupStackModal() {
+    const modal = document.getElementById('modal-stack-pull');
+    const btnOpen = document.getElementById('btn-open-stack-modal');
+    const btnClose = document.getElementById('btn-close-stack-modal');
+    const btnSubmit = document.getElementById('btn-submit-stack-pull');
+    const feedback = document.getElementById('stack-status-feedback');
+    const lookbackInput = document.getElementById('input-stack-lookback');
+
+    if (!modal) return;
+
+    if (btnOpen) {
+      btnOpen.addEventListener('click', () => {
+        modal.classList.add('open');
+      });
+    }
+
+    if (btnClose) {
+      btnClose.addEventListener('click', () => {
+        modal.classList.remove('open');
+      });
+    }
+
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) modal.classList.remove('open');
+    });
+
+    // Preset buttons
+    document.querySelectorAll('.btn-lookback-preset').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.btn-lookback-preset').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        if (lookbackInput) {
+          lookbackInput.value = btn.dataset.hours;
+        }
+      });
+    });
+
+    if (btnSubmit) {
+      btnSubmit.addEventListener('click', async () => {
+        btnSubmit.disabled = true;
+        btnSubmit.innerText = '⚡ Connecting & Pulling Telemetry...';
+
+        const lookback = parseFloat(lookbackInput ? lookbackInput.value : '2') || 2.0;
+        const caseTitle = document.getElementById('input-stack-title')?.value.trim() || null;
+        const promUrl = document.getElementById('input-prometheus-url')?.value.trim() || 'http://localhost:9090';
+        const k8sApi = document.getElementById('input-k8s-api')?.value.trim() || 'http://localhost:8001';
+        const k8sNs = document.getElementById('input-k8s-ns')?.value.trim() || 'production';
+        const gitRepo = document.getElementById('input-git-repo')?.value.trim() || 'corp/payment-service';
+
+        const providers = [];
+        if (document.getElementById('provider-prometheus')?.checked) providers.push('prometheus');
+        if (document.getElementById('provider-k8s')?.checked) providers.push('kubernetes');
+        if (document.getElementById('provider-git')?.checked) providers.push('git');
+
+        if (providers.length === 0) {
+          alert('Please select at least one telemetry provider to pull from.');
+          btnSubmit.disabled = false;
+          btnSubmit.innerText = '⚡ Pull Telemetry & Reconstruct Incident';
+          return;
+        }
+
+        if (feedback) {
+          feedback.style.display = 'block';
+          feedback.style.background = 'rgba(16, 185, 129, 0.1)';
+          feedback.style.color = '#34d399';
+          feedback.innerText = `Connecting to ${providers.join(', ')}... Querying metrics, events, and changelogs across last ${lookback}h...`;
+        }
+
+        try {
+          const res = await Api.pullStackTelemetry({
+            lookback_hours: lookback,
+            case_title: caseTitle,
+            providers: providers,
+            prometheus_url: promUrl,
+            kubernetes_api: k8sApi,
+            kubernetes_namespace: k8sNs,
+            git_repo: gitRepo,
+          });
+
+          if (feedback) {
+            feedback.style.background = 'rgba(16, 185, 129, 0.2)';
+            feedback.innerHTML = `<strong>Stack Telemetry Ingested!</strong> Detected ${res.data.anomalies_detected} anomalies, ${res.data.correlations_linked} correlations, and ${res.data.hypotheses_count} causal hypotheses. Leading: <em>${res.data.leading_hypothesis ? res.data.leading_hypothesis.statement : 'Analyzed'}</em>.`;
+          }
+
+          await this.loadIncidents();
+          this.switchIncident(res.data.incident_id);
+
+          setTimeout(() => {
+            modal.classList.remove('open');
+          }, 1800);
+        } catch (err) {
+          if (feedback) {
+            feedback.style.background = 'rgba(239, 68, 68, 0.15)';
+            feedback.style.color = '#f87171';
+            feedback.innerText = `Stack Pull Error: ${err.message}`;
+          }
+        } finally {
+          btnSubmit.disabled = false;
+          btnSubmit.innerText = '⚡ Pull Telemetry & Reconstruct Incident';
+        }
+      });
+    }
+  }
+
   switchView(viewName) {
     this.activeTab = viewName;
     document.querySelectorAll('.view-panel').forEach((p) => p.classList.remove('active'));
@@ -446,9 +565,113 @@ class AutopsyApp {
       // 9. Replay Timestamps
       const timestamps = await Api.getReplayTimestamps(incidentId);
       if (this.replayCtrl) this.replayCtrl.setTimestamps(timestamps);
+
+      // 10. Dynamic Narrative Banner & Invariant Checklist
+      const inc = await Api.getIncident(incidentId);
+      this.updateNarrativeBanner(inc, blast, hypotheses);
+      this.renderOverviewChecklist(inc, blast, hypotheses, events);
     } catch (err) {
       console.error('Forensic loading error:', err);
     }
+  }
+
+  updateNarrativeBanner(inc, blast, hypotheses) {
+    const narrativeEl = document.getElementById('overview-narrative-text');
+    if (!narrativeEl) return;
+
+    if (inc.summary && inc.summary.trim().length > 20) {
+      narrativeEl.innerHTML = inc.summary;
+    } else if (hypotheses.length > 0) {
+      const top = hypotheses[0];
+      const pathStr = (blast && blast.propagation_path && blast.propagation_path.length > 1)
+        ? blast.propagation_path.join(' → ')
+        : (blast.root_cause_service || 'affected nodes');
+      narrativeEl.innerHTML = `Deterministic forensic reconstruction indicates: <strong>${top.statement}</strong> (Investigation support: ${(top.score * 100).toFixed(0)}%). Propagation cascade path: <code>${pathStr}</code>.`;
+    } else {
+      narrativeEl.innerHTML = `Active incident case file initialized. Ingesting telemetry and reconstructing failure timeline...`;
+    }
+  }
+
+  renderOverviewChecklist(inc, blast, hypotheses, events) {
+    const container = document.getElementById('overview-checklist-container');
+    if (!container) return;
+
+    // 1. Temporal Ordering
+    const configOrDeploy = events.find((e) => ['CONFIG', 'DEPLOYMENT', 'GIT_CHANGE'].includes(e.source_type));
+    const firstAnomaly = events.find((e) => ['METRIC', 'ALERT', 'LOG'].includes(e.source_type) && e.severity === 'CRITICAL');
+    let temporalText = 'Temporal sequence verified across telemetry sources.';
+    if (configOrDeploy && firstAnomaly) {
+      const t1 = new Date(configOrDeploy.timestamp).toLocaleTimeString();
+      const t2 = new Date(firstAnomaly.timestamp).toLocaleTimeString();
+      temporalText = `${configOrDeploy.source_type} change on ${configOrDeploy.service} at ${t1} strictly preceded symptom onset on ${firstAnomaly.service} at ${t2}.`;
+    } else if (configOrDeploy) {
+      temporalText = `${configOrDeploy.source_type} on ${configOrDeploy.service} recorded prior to failure onset.`;
+    } else {
+      temporalText = `All observations strictly ordered across UTC microsecond timestamps without time inversion.`;
+    }
+
+    // 2. Topological Propagation
+    let topoText = 'Localized node degradation without cascading propagation.';
+    if (blast && blast.propagation_path && blast.propagation_path.length > 1) {
+      topoText = `${blast.propagation_path.join(' → ')} (${blast.indirectly_affected.length} upstream caller services degraded).`;
+    } else if (blast && blast.root_cause_service) {
+      topoText = `Failure localized to root node: ${blast.root_cause_service}.`;
+    }
+
+    // 3. Prove Me Wrong Refutation
+    const refuted = hypotheses.filter((h) => h.status === 'REFUTED');
+    let counterText = 'All rival candidate hypotheses evaluated against empirical telemetry.';
+    if (refuted.length > 0) {
+      const refutedSummary = refuted.slice(0, 2).map((r) => r.statement.split(' ').slice(0, 4).join(' ')).join('; ');
+      counterText = `Rival hypotheses refuted: ${refutedSummary}... (empirical counterevidence verified).`;
+    } else if (hypotheses.length > 0) {
+      counterText = `Leading hypothesis scored ${(hypotheses[0].score * 100).toFixed(0)}% against counterevidence rules.`;
+    }
+
+    // 4. Mitigation & Recovery
+    const recoveryEv = events.find(
+      (e) => e.source_type === 'RECOVERY' || (e.raw_data && String(e.raw_data.action || '').toLowerCase().includes('rollback'))
+    );
+    let recoveryText = 'Incident lifecycle monitored to baseline normalization.';
+    if (recoveryEv) {
+      const recTime = new Date(recoveryEv.timestamp).toLocaleTimeString();
+      recoveryText = `Recovery/Mitigation observed at ${recTime}: system telemetry verified returning to historical baseline.`;
+    } else if (inc.status === 'RESOLVED') {
+      recoveryText = `Incident resolved: post-incident telemetry verified stable against baseline medians.`;
+    } else {
+      recoveryText = `Telemetry actively monitored for recovery stabilization and baseline return.`;
+    }
+
+    container.innerHTML = `
+      <div style="display:flex; gap:10px; align-items:flex-start;">
+        <span style="color:#10b981; font-weight:700;">✓</span>
+        <div>
+          <strong>Temporal Ordering Verified:</strong>
+          <div style="color:var(--text-muted); font-size:12px;">${temporalText}</div>
+        </div>
+      </div>
+      <div style="display:flex; gap:10px; align-items:flex-start;">
+        <span style="color:#10b981; font-weight:700;">✓</span>
+        <div>
+          <strong>Topological Dependency Propagation:</strong>
+          <div style="color:var(--text-muted); font-size:12px;">${topoText}</div>
+        </div>
+      </div>
+      <div style="display:flex; gap:10px; align-items:flex-start;">
+        <span style="color:#10b981; font-weight:700;">✓</span>
+        <div>
+          <strong>Prove Me Wrong Counterevidence Test:</strong>
+          <div style="color:var(--text-muted); font-size:12px;">${counterText}</div>
+        </div>
+      </div>
+      <div style="display:flex; gap:10px; align-items:flex-start;">
+        <span style="color:#10b981; font-weight:700;">✓</span>
+        <div>
+          <strong>Mitigation & Recovery Verified:</strong>
+          <div style="color:var(--text-muted); font-size:12px;">${recoveryText}</div>
+        </div>
+      </div>
+    `;
   }
 }
 

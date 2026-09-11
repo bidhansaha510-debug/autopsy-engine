@@ -129,4 +129,19 @@ export const Api = {
       body: JSON.stringify({ path, case_title: caseTitle }),
     });
   },
+
+  updateReport(reportId, updateData) {
+    return this.fetchJson(`/reports/${reportId}`, {
+      method: 'PUT',
+      body: JSON.stringify(updateData),
+    });
+  },
+
+  pullStackTelemetry(data) {
+    return this.fetchJson('/connectors/pull', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
 };
+

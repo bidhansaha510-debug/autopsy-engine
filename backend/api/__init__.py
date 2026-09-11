@@ -8,12 +8,14 @@ from backend.api.routes_investigation import router as investigation_router
 from backend.api.routes_replay import router as replay_router
 from backend.api.routes_reports import router as reports_router
 from backend.api.routes_codebase import router as codebase_router
+from backend.api.routes_connectors import router as connectors_router
 
 api_router = APIRouter(prefix="/api")
 
 api_router.include_router(incidents_router)
 api_router.include_router(ingestion_router)
 api_router.include_router(codebase_router)
+api_router.include_router(connectors_router)
 api_router.include_router(telemetry_router)
 api_router.include_router(topology_router)
 api_router.include_router(forensics_router)

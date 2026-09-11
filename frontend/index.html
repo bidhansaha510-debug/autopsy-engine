@@ -27,6 +27,9 @@
       <div class="incident-selector-wrapper">
         <span style="font-size:11px; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Case File:</span>
         <select id="select-incident" class="select-incident"></select>
+        <button id="btn-open-stack-modal" class="ctrl-btn" style="border-color:#10b981; color:#34d399;">
+          🔌 Pull From Stack
+        </button>
         <button id="btn-open-upload-modal" class="ctrl-btn" style="border-color:var(--accent-cyan); color:var(--accent-cyan);">
           📁 Ingest Codebase / Folder
         </button>
@@ -108,6 +111,17 @@
     <main class="main-viewport">
       <!-- 1. Overview Panel -->
       <section id="view-overview" class="view-panel active">
+        <!-- Prominent Plain-English Incident Narrative Banner -->
+        <div class="glass-card" style="margin-bottom: 20px; border-left: 4px solid var(--accent-cyan); background: linear-gradient(90deg, rgba(0, 240, 255, 0.06), rgba(15, 23, 42, 0.7));">
+          <div class="card-header" style="margin-bottom: 8px;">
+            <span class="card-title" style="color:var(--accent-cyan);"><span style="font-size:16px;">⚡</span> Forensic Storyline & Plain-English Incident Narrative</span>
+            <span class="badge badge-resolved">DETERMINISTIC TIMELINE RECONSTRUCTION</span>
+          </div>
+          <div id="overview-narrative-text" style="font-size: 14px; line-height: 1.7; color: #f1f5f9; font-weight: 500;">
+            Loading incident narrative...
+          </div>
+        </div>
+
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
           <div class="glass-card">
             <div class="card-header">
@@ -120,35 +134,8 @@
               <span class="card-title"><span>🎯</span> Forensic Invariant Checklist</span>
               <span class="badge badge-provenance">DETERMINISTIC VERIFICATION</span>
             </div>
-            <div style="display:flex; flex-direction:column; gap:12px; font-size:13px;">
-              <div style="display:flex; gap:10px; align-items:flex-start;">
-                <span style="color:#10b981; font-weight:700;">✓</span>
-                <div>
-                  <strong>Temporal Ordering Verified:</strong>
-                  <div style="color:var(--text-muted); font-size:12px;">Configuration change at 02:47 strictly preceded connection pool saturation at 02:48.</div>
-                </div>
-              </div>
-              <div style="display:flex; gap:10px; align-items:flex-start;">
-                <span style="color:#10b981; font-weight:700;">✓</span>
-                <div>
-                  <strong>Topological Dependency Propagation:</strong>
-                  <div style="color:var(--text-muted); font-size:12px;">payment-service saturated → checkout-service RPC timed out → api-gateway returned 503s.</div>
-                </div>
-              </div>
-              <div style="display:flex; gap:10px; align-items:flex-start;">
-                <span style="color:#10b981; font-weight:700;">✓</span>
-                <div>
-                  <strong>Prove Me Wrong Counterevidence Test:</strong>
-                  <div style="color:var(--text-muted); font-size:12px;">Rival network degradation hypothesis refuted: external packet loss metrics stayed normal.</div>
-                </div>
-              </div>
-              <div style="display:flex; gap:10px; align-items:flex-start;">
-                <span style="color:#10b981; font-weight:700;">✓</span>
-                <div>
-                  <strong>Mitigation & Recovery Verified:</strong>
-                  <div style="color:var(--text-muted); font-size:12px;">02:52 Rollback to pool size 50 immediately normalized connection pool utilization to 22%.</div>
-                </div>
-              </div>
+            <div id="overview-checklist-container" style="display:flex; flex-direction:column; gap:12px; font-size:13px;">
+              <!-- Populated dynamically by app.js -->
             </div>
           </div>
         </div>
@@ -307,6 +294,74 @@
         </div>
 
         <div id="upload-status-feedback" style="font-size:12px; line-height:1.5; padding:10px; border-radius:4px; display:none;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stack Telemetry Pull Modal -->
+  <div id="modal-stack-pull" class="modal-backdrop">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div style="font-family:var(--font-display); font-weight:700; font-size:15px; color:#fff; display:flex; align-items:center; gap:8px;">
+          <span>🔌</span> Pull Incident Telemetry Directly From Stack
+        </div>
+        <button id="btn-close-stack-modal" class="ctrl-btn" style="padding:2px 8px;">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom:12px; font-size:12px; color:var(--text-muted); line-height:1.5;">
+          Point Autopsy at your infrastructure after an incident. It queries Prometheus metrics, Kubernetes cluster events, and Git deployment changelogs across the lookback window.
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:4px;">Incident Case Title (Optional):</label>
+          <input id="input-stack-title" type="text" class="input-field" placeholder="e.g. SEV1 Outage: Payment RPC Timeouts & Pod Failures">
+        </div>
+
+        <div style="margin-bottom:14px;">
+          <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:6px;">Lookback Window (Hours prior to current time):</label>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input id="input-stack-lookback" type="number" step="0.5" min="0.5" max="24" value="2" class="input-field" style="width:90px;">
+            <button type="button" class="filter-btn active btn-lookback-preset" data-hours="1">1h</button>
+            <button type="button" class="filter-btn btn-lookback-preset" data-hours="2">2h</button>
+            <button type="button" class="filter-btn btn-lookback-preset" data-hours="4">4h</button>
+            <button type="button" class="filter-btn btn-lookback-preset" data-hours="8">8h</button>
+          </div>
+        </div>
+
+        <div style="margin-bottom:14px;">
+          <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:6px;">Target Observability Providers:</label>
+          <div style="display:flex; flex-direction:column; gap:10px; background:rgba(15,23,42,0.6); padding:12px; border-radius:6px; border:1px solid var(--border-color);">
+            <label style="display:flex; align-items:center; gap:8px; font-size:12px; color:#fff; cursor:pointer;">
+              <input type="checkbox" id="provider-prometheus" checked>
+              <strong>Prometheus / VictoriaMetrics</strong>
+              <span style="color:var(--text-muted); font-size:11px;">(p99 latency, 5xx rate, pool size)</span>
+            </label>
+            <input id="input-prometheus-url" type="text" class="input-field" value="http://localhost:9090" style="font-size:11px; margin-left:22px; width:calc(100% - 22px);" placeholder="Prometheus Server URL">
+
+            <label style="display:flex; align-items:center; gap:8px; font-size:12px; color:#fff; cursor:pointer; margin-top:4px;">
+              <input type="checkbox" id="provider-k8s" checked>
+              <strong>Kubernetes Events</strong>
+              <span style="color:var(--text-muted); font-size:11px;">(OOMKilled, BackOff, ProbeFailures)</span>
+            </label>
+            <div style="display:flex; gap:8px; margin-left:22px;">
+              <input id="input-k8s-api" type="text" class="input-field" value="http://localhost:8001" style="font-size:11px; flex:2;" placeholder="K8s API Server">
+              <input id="input-k8s-ns" type="text" class="input-field" value="production" style="font-size:11px; flex:1;" placeholder="Namespace">
+            </div>
+
+            <label style="display:flex; align-items:center; gap:8px; font-size:12px; color:#fff; cursor:pointer; margin-top:4px;">
+              <input type="checkbox" id="provider-git" checked>
+              <strong>Git / GitHub Deployments</strong>
+              <span style="color:var(--text-muted); font-size:11px;">(recent commits & config updates)</span>
+            </label>
+            <input id="input-git-repo" type="text" class="input-field" value="corp/payment-service" style="font-size:11px; margin-left:22px; width:calc(100% - 22px);" placeholder="Owner/Repo or Git URL">
+          </div>
+        </div>
+
+        <button id="btn-submit-stack-pull" class="ctrl-btn" style="width:100%; margin-top:10px; background:#10b981; color:#000; font-weight:700; justify-content:center; border:none; padding:12px; font-size:13px;">
+          ⚡ Pull Telemetry & Reconstruct Incident
+        </button>
+
+        <div id="stack-status-feedback" style="font-size:12px; line-height:1.5; padding:10px; border-radius:4px; margin-top:10px; display:none;"></div>
       </div>
     </div>
   </div>

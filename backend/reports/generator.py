@@ -120,21 +120,75 @@ class ForensicReportGenerator:
             for rec in recoveries:
                 md_lines.append(f"- **Observed Recovery** ({rec.timestamp.strftime('%H:%M:%S')}): {rec.observed_recovery}")
 
-        recommendations = [
-            {"action": "Automate pre-flight connection pool validation before configuration pushes.", "owner": "SRE Team", "priority": "P1"},
-            {"action": "Enforce admission limits on payment-service to prevent thread starvation during pool exhaustion.", "owner": "Backend Team", "priority": "P2"},
-            {"action": "Implement circuit breaker on checkout-service RPC client to fail-fast.", "owner": "Checkout Team", "priority": "P1"},
-        ]
+        # Dynamically synthesize recommendations based on causal mechanism & topology
+        root_svc = blast.root_cause_service or (top_hyp.affected_services[0] if top_hyp and top_hyp.affected_services else "core-service")
+        callers = blast.indirectly_affected or []
+        callers_str = ", ".join(callers[:2]) if callers else "upstream callers"
 
-        preventive_actions = [
-            {"prevention": "Add linting rule to Kubernetes ConfigMaps restricting min db_pool size to 25.", "target_date": "2026-09-20"},
-            {"prevention": "Setup synthetic end-to-end canary probing on checkout-service.", "target_date": "2026-09-18"},
-        ]
+        recommendations = []
+        preventive_actions = []
+        unknowns = []
 
-        unknowns = [
-            "Network interface packet captures during 02:49-02:51 were not retained in cold storage.",
-            "Thread dumps from payment-service pods prior to termination are missing.",
-        ]
+        is_config = top_hyp and ("config" in top_hyp.statement.lower() or any(p.get("type") == "CONFIG" for p in (top_hyp.predicted_observations or [])))
+        is_deploy = top_hyp and ("deploy" in top_hyp.statement.lower() or any(p.get("type") == "DEPLOYMENT" for p in (top_hyp.predicted_observations or [])))
+
+        if is_config:
+            recommendations.append({
+                "action": f"Automate pre-flight configuration validation and parameter range boundaries for {root_svc}.",
+                "owner": f"Team {root_svc}",
+                "priority": "P1",
+            })
+            recommendations.append({
+                "action": f"Implement client-side circuit breakers and admission timeouts on {callers_str} to prevent cascade during {root_svc} resource starvation.",
+                "owner": "Platform SRE",
+                "priority": "P1",
+            })
+            recommendations.append({
+                "action": f"Configure automated canary verification on {root_svc} config pushes with instant rollback trigger.",
+                "owner": "DevOps Team",
+                "priority": "P2",
+            })
+            preventive_actions.append({
+                "prevention": f"Add schema validation and minimum bounds linting to configuration repositories for {root_svc}.",
+                "target_date": "Next Sprint",
+            })
+            preventive_actions.append({
+                "prevention": f"Deploy synthetic canary traffic probes on {callers_str} to alert on degraded downstream dependencies.",
+                "target_date": "Within 14 Days",
+            })
+        elif is_deploy:
+            recommendations.append({
+                "action": f"Implement staged canary deployment strategy (1% -> 10% -> 100%) with automated error-rate health gates for {root_svc}.",
+                "owner": f"Team {root_svc}",
+                "priority": "P1",
+            })
+            recommendations.append({
+                "action": f"Enforce automated smoke regression tests targeting critical downstream RPC endpoints during CI/CD on {root_svc}.",
+                "owner": "QA / DevOps",
+                "priority": "P1",
+            })
+            preventive_actions.append({
+                "prevention": f"Incorporate automated pre-release load testing and memory profiling into deployment pipelines for {root_svc}.",
+                "target_date": "Next Sprint",
+            })
+        else:
+            recommendations.append({
+                "action": f"Review horizontal pod autoscaling (HPA) thresholds and thread pool admission limits on {root_svc}.",
+                "owner": f"Team {root_svc}",
+                "priority": "P1",
+            })
+            recommendations.append({
+                "action": f"Deploy circuit breaker fail-fast patterns on {callers_str} to isolate downstream latency surges.",
+                "owner": "SRE Team",
+                "priority": "P1",
+            })
+            preventive_actions.append({
+                "prevention": f"Tune non-parametric baseline alerting (MAD z-score >= 3.5) on {root_svc} golden signals.",
+                "target_date": "Within 14 Days",
+            })
+
+        unknowns.append(f"Ephemeral debug logs from {root_svc} containers prior to termination were subject to log rotation limits.")
+        unknowns.append(f"Fine-grained thread state dumps at peak queue saturation ({incident.started_at.strftime('%H:%M:%S')} UTC) were not captured.")
 
         md_lines.extend([
             "",

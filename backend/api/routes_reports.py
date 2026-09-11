@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 from backend.core.database import get_db
 from backend.models import Report
-from backend.schemas.investigation import ReportResponse
+from backend.schemas.investigation import ReportResponse, ReportUpdateRequest
 from backend.reports.generator import ForensicReportGenerator
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
@@ -41,3 +41,31 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
         media_type="text/markdown",
         headers={"Content-Disposition": f"attachment; filename=incident_autopsy_{report_id}.md"},
     )
+
+
+@router.put("/{report_id}", response_model=ReportResponse)
+def update_report(
+    report_id: str,
+    update_data: "ReportUpdateRequest",
+    db: Session = Depends(get_db),
+):
+    rep = db.query(Report).filter(Report.id == report_id).first()
+    if not rep:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    if update_data.title is not None:
+        rep.title = update_data.title
+    if update_data.content_markdown is not None:
+        rep.content_markdown = update_data.content_markdown
+    if update_data.executive_summary is not None:
+        rep.executive_summary = update_data.executive_summary
+    if update_data.rca_statement is not None:
+        rep.rca_statement = update_data.rca_statement
+    if update_data.recommendations is not None:
+        rep.recommendations = update_data.recommendations
+    if update_data.preventive_actions is not None:
+        rep.preventive_actions = update_data.preventive_actions
+
+    db.commit()
+    db.refresh(rep)
+    return rep
