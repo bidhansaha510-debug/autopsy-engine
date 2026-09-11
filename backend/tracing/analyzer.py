@@ -144,21 +144,32 @@ class TraceAnalyzer:
 
         find_critical_path(root_node)
 
-        # Identify failing spans and pinpoint deepest root failure
+        # Identify failing spans and pinpoint root initiating failure via causal analysis
         failing_spans = [s for s in spans if s.status.upper() == "ERROR"]
         failing_services = list({s.service for s in failing_spans})
         root_failure_span_id = None
 
         if failing_spans:
-            # Find the leaf-most failing span (no failing children)
-            for fs in failing_spans:
+            def failure_causality_score(fs: Span) -> Tuple[int, float, int]:
+                # 1. Spans with explicit error details / exception attributes
+                attrs = fs.attributes_json or {}
+                has_explicit_error = 1 if any(k in attrs for k in ("error", "error.message", "exception", "exception.message")) else 0
+                
+                # 2. Leaf-most failing position in call tree (no failing children)
                 fs_children = children_map.get(fs.span_id, [])
-                has_failing_child = any(c.status.upper() == "ERROR" for c in fs_children)
-                if not has_failing_child:
-                    root_failure_span_id = fs.span_id
-                    break
-            if not root_failure_span_id and failing_spans:
-                root_failure_span_id = failing_spans[-1].span_id
+                is_originating_leaf = 1 if not any(c.status.upper() == "ERROR" for c in fs_children) else 0
+
+                # 3. Temporal onset: earlier start time favored
+                try:
+                    onset_delta = (fs.start_time - trace.start_time).total_seconds()
+                except Exception:
+                    onset_delta = 0.0
+
+                # Tuple for sorting: prioritize originating leaf with explicit error, breaking ties by earliest onset
+                return (is_originating_leaf, has_explicit_error, -onset_delta)
+
+            best_root_failure = max(failing_spans, key=failure_causality_score)
+            root_failure_span_id = best_root_failure.span_id
 
         # Mark root failure on node
         def mark_root_failure(node: Optional[SpanNode]):

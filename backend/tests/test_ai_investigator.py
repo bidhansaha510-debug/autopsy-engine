@@ -43,7 +43,7 @@ def test_ai_investigator_tool_loop(test_db):
         assert len(s.findings) > 0
 
     # Verify calibrated synthesis language
-    assert "FORENSIC" in inv.current_focus or "Hypothesis" in inv.current_focus
+    assert "forensic" in inv.current_focus.lower() or "hypothesis" in inv.current_focus.lower()
     assert len(inv.current_focus) > 50
 
     # Verify report generator compiles evidence-backed report

@@ -50,6 +50,7 @@ class Deployment(Base, TimestampMixin):
     __tablename__ = "deployments"
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
+    service_id = Column(String(36), ForeignKey("services.id", ondelete="SET NULL"), nullable=True, index=True)
     service = Column(String(128), nullable=False, index=True)
     version = Column(String(64), nullable=False)
     commit_sha = Column(String(64), nullable=True, index=True)
@@ -60,11 +61,14 @@ class Deployment(Base, TimestampMixin):
     environment = Column(String(64), default="production", nullable=False)
     metadata_json = Column(JSON, default=dict, nullable=False)
 
+    service_rel = relationship("Service", foreign_keys=[service_id])
+
 
 class ConfigChange(Base, TimestampMixin):
     __tablename__ = "config_changes"
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
+    service_id = Column(String(36), ForeignKey("services.id", ondelete="SET NULL"), nullable=True, index=True)
     service = Column(String(128), nullable=False, index=True)
     config_key = Column(String(128), nullable=False, index=True)
     old_value = Column(String(512), nullable=True)
@@ -74,3 +78,5 @@ class ConfigChange(Base, TimestampMixin):
     reason = Column(String(512), nullable=True)
     environment = Column(String(64), default="production", nullable=False)
     metadata_json = Column(JSON, default=dict, nullable=False)
+
+    service_rel = relationship("Service", foreign_keys=[service_id])

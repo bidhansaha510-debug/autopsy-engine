@@ -34,6 +34,8 @@ class Evidence(Base, TimestampMixin):
     # LOG, METRIC, TRACE, DEPLOYMENT, CONFIG, ALERT, KUBERNETES_EVENT, GIT_CHANGE, RECOVERY, QUERY_RESULT, OBSERVATION
     source = Column(String(128), nullable=False)
     entity = Column(String(128), nullable=False, index=True)
+    entity_id = Column(String(64), nullable=True, index=True)
+    entity_type = Column(String(32), nullable=True, index=True)  # SERVICE, METRIC, TRACE, SPAN, DEPLOYMENT, CONFIG_CHANGE
     content = Column(JSON, nullable=False)
     confidence = Column(Float, default=1.0, nullable=False)
     provenance = Column(JSON, default=dict, nullable=False)

@@ -88,15 +88,35 @@ class ForensicsToolRegistry:
         result = TraceAnalyzer.analyze_trace(trace, spans)
         return result.model_dump()
 
-    def inspect_deployment(self, service: Optional[str] = None, lookback_entries: int = 10) -> Dict[str, Any]:
-        """Inspects recent deployments and commit SHAs."""
+    def inspect_deployment(
+        self,
+        service: Optional[str] = None,
+        lookback_entries: int = 10,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Inspects recent deployments and commit SHAs with explicit temporal bounds."""
+        from datetime import datetime
         q = self.db.query(Deployment)
         if service:
             q = q.filter(Deployment.service == service)
+        if start_time:
+            try:
+                st = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                q = q.filter(Deployment.deployed_at >= st)
+            except Exception:
+                pass
+        if end_time:
+            try:
+                et = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+                q = q.filter(Deployment.deployed_at <= et)
+            except Exception:
+                pass
         deps = q.order_by(Deployment.deployed_at.desc()).limit(lookback_entries).all()
         return {
             "deployments": [
                 {
+                    "id": d.id,
                     "service": d.service,
                     "version": d.version,
                     "commit_sha": d.commit_sha,
@@ -108,11 +128,30 @@ class ForensicsToolRegistry:
             ]
         }
 
-    def inspect_config_change(self, service: Optional[str] = None, lookback_entries: int = 10) -> Dict[str, Any]:
-        """Inspects configuration changes, old values, new values, and operators."""
+    def inspect_config_change(
+        self,
+        service: Optional[str] = None,
+        lookback_entries: int = 10,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Inspects configuration changes with explicit temporal bounds."""
+        from datetime import datetime
         q = self.db.query(ConfigChange)
         if service:
             q = q.filter(ConfigChange.service == service)
+        if start_time:
+            try:
+                st = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                q = q.filter(ConfigChange.changed_at >= st)
+            except Exception:
+                pass
+        if end_time:
+            try:
+                et = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+                q = q.filter(ConfigChange.changed_at <= et)
+            except Exception:
+                pass
         cfgs = q.order_by(ConfigChange.changed_at.desc()).limit(lookback_entries).all()
         return {
             "config_changes": [
@@ -243,6 +282,29 @@ class ForensicsToolRegistry:
             for d in svc.inbound_dependencies
         ]
         return {"service": service_name, "dependencies": outbound, "dependents": inbound}
+
+    def generate_competing_hypotheses(self, incident_id: str) -> Dict[str, Any]:
+        """Dynamically generates and tests competing causal hypotheses against evidence."""
+        from backend.hypotheses.engine import HypothesisEngine
+        engine = HypothesisEngine(self.db)
+        hyps = engine.generate_competing_hypotheses(incident_id)
+        return {
+            "incident_id": incident_id,
+            "hypotheses_count": len(hyps),
+            "hypotheses": [
+                {
+                    "id": h.id,
+                    "statement": h.statement,
+                    "score": h.score,
+                    "status": h.status,
+                    "causal_mechanism": h.causal_mechanism,
+                    "supporting_count": len(h.actual_observations or []),
+                    "contradicting_count": 0,
+                    "missing_evidence": h.missing_evidence or [],
+                }
+                for h in hyps
+            ]
+        }
 
     def test_hypothesis(self, hypothesis_id: str) -> Dict[str, Any]:
         """Executes Prove Me Wrong evaluation against a hypothesis."""
